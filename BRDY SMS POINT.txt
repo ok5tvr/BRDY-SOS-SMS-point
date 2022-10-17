@@ -1,0 +1,598 @@
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <SoftwareSerial.h>
+#include <WebSerial.h>
+#include <ESPAsyncWebServer.h>
+#include <ESPAsyncTCP.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_SDA 19
+#define OLED_SCL 20 
+#define OLED_RST 16
+#define MYPORT_TX 12
+#define MYPORT_RX 13
+
+SoftwareSerial myPort;
+
+// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+String data = "";
+String call = "";
+String sms_data = "";
+String call_old = "";
+byte pocet = 0;
+String telefon = "+420xxxxxxxxx";
+String tel_seznam [4] = {"+420xxxxxxxxx","+420xxxxxxxxx","+420xxxxxxxxx","+420xxxxxxxxx"};
+String stav_radek = "|w|  |a|  |s   |";
+
+//wifi setup
+String IP = "000.000.000.000";
+const char *ssid     = "xxxxx"; // wifi SSID
+const char *password = "xxxxx"; // wifi password
+
+//aprs setup
+char servername[] = "czech.aprs2.net";
+String user = "xxxx-16"; APRS user
+String password_aprs = "xxxx"; APRS password
+
+WiFiClient client;
+
+AsyncWebServer server1(80);
+
+
+
+void con_aprs();
+void alarm();
+void postdata();
+void updateSerial();
+void test_sim800_module();
+void stav();
+void wifi();
+
+/* Message callback of WebSerial */
+void recvMsg(uint8_t *data, size_t len){
+  WebSerial.println("Received Data...");
+  String d = "";
+  for(int i=0; i < len; i++){
+    d += char(data[i]);
+  }
+  WebSerial.println(d);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+
+Serial.begin(9600);
+
+
+myPort.begin(9600, SWSERIAL_8N1, MYPORT_RX, MYPORT_TX, false);
+if (!myPort) { // If the object did not initialize, then its configuration is invalid
+  Serial.println("Invalid SoftwareSerial pin configuration, check config"); 
+  while (1) { // Don't continue with invalid configuration
+    delay (1000);
+  }
+} 
+
+
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+
+  // Show initial display buffer contents on the screen --
+  // the library initializes this with an Adafruit splash screen.
+  display.display();
+  delay(2000); // Pause for 2 seconds
+
+  // Clear the buffer
+  display.clearDisplay();
+  display.setTextSize(2);             // Normal 1:1 pixel scale
+  display.setTextColor(WHITE);        // Draw white text
+  display.setCursor(0,0);             // Start at top-left corner
+  display.println(F("   BRDY"));
+  display.setCursor(0,20);             // Start at top-left corner
+  display.println(F("  rescue"));
+  display.setTextSize(1);  
+  display.setCursor(0,45);             // Start at top-left corner
+  display.println(F("by OK5TVR"));
+   display.setTextSize(1);  
+  display.setCursor(0,55);             // Start at top-left corner
+  display.println(F("vez.: 2.5.0.0"));
+  display.display();
+
+  Serial.println();
+  Serial.print("Connecting");
+
+wifi();
+WebSerial.begin(&server1);
+/* Attach Message Callback */
+WebSerial.msgCallback(recvMsg);
+server1.begin();
+
+con_aprs();
+test_sim800_module();
+stav();
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+if (WiFi.status() == WL_CONNECTED){
+  
+}
+else {
+  Serial.println ("wifi no connect....");
+  wifi();
+}
+
+ if (client.available()) {
+    char c = client.read();
+    
+    data = data + c;
+    if (c == char(10)){
+      
+      //Serial.println(data);
+      call = data.substring(0,data.indexOf(">"));
+      Serial.print("Call: ");
+      Serial.println(call);
+      WebSerial.print("Call: ");
+      WebSerial.println(call);
+
+      // displa//
+      display.clearDisplay();
+      display.setTextSize(1);             // Normal 1:1 pixel scale
+      display.setTextColor(WHITE);        // Draw white text
+      display.setCursor(0,0);             // Start at top-left corner
+      display.println(F("BRDY rescue"));
+      display.setCursor(0,20);       
+      display.setTextSize(1);        // Start at top-left corner
+      display.println(call);
+      display.setCursor(0,55);       
+      display.setTextSize(1);        // Start at top-left corner
+      display.println(stav_radek);
+      display.display();
+
+
+
+      if (call.indexOf("aprsc")>0){
+        pocet = pocet + 1;
+        Serial.println(pocet);
+      }
+
+if (call == "BRDRES1"){
+        if (call_old != call){
+        alarm();
+        sms_data = "Aktivace bodu BRDRES1, GPS:4343123N,0134153E, https://mapy.cz/turisticka/?q=43.4312,13.4153";
+        postdata();
+        }
+        call_old = call;
+      }
+
+if (call == "BRD50RE"){
+        if (call_old != call){  
+      alarm();        
+      sms_data = "Aktivace bodu [50] Valec, GPS:49.7217387N,13.7259982E, https://mapy.cz/turisticka/?q=49.7217,13.7259";
+        postdata();
+        }
+        call_old = call;
+      }
+
+if (call == "BRD51RE"){        
+    if (call_old != call){        
+    alarm();        
+      sms_data = "Aktivace bodu [51] LC Cerna, GPS:49.6856967N,13.7172583E, https://mapy.cz/turisticka/?q=49.6856,13.7172";
+        postdata();
+        }
+        call_old = call;
+      }
+
+if (call == "BRD52RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [52] Stribrny kamen, GPS:49.6941117N,13.7034550E, https://mapy.cz/turisticka/?q=49.6941,13.7034";
+            postdata();
+            }
+            call_old = call;
+          }
+
+if (call == "BRD53RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [53] Florian, GPS:49.7184761N,13.7129676E, https://mapy.cz/turisticka/?q=49.7184,13.7129";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD54RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [54] Vyhlidka TT, GPS:49.7036819N,13.7845484E, https://mapy.cz/turisticka/?q=49.70368,13.7845";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD55RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [55] NS Jordan, GPS:49.7407409N,13.8681123E, https://mapy.cz/turisticka/?q=49.7407,13.8681";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD56RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [56] Houpak, GPS:49.7255924N,13.8675195E, https://mapy.cz/turisticka/?q=49.7255,13.8675";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD57RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [57] Horejsi padrtsky ryb., GPS:49.6478093N,13.7554568E, https://mapy.cz/turisticka/?q=49.6478,13.7554";
+            postdata();
+            }
+            call_old = call;
+          }
+
+if (call == "BRD58RE"){        
+    if (call_old != call){       
+    alarm();        
+    sms_data = "Aktivace bodu [58] Trojhran, GPS:49.6818781N,13.8293517E, https://mapy.cz/turisticka/?q=49.6818,13.8293";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD59RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [59] Jindrichova skala, GPS:49.7680183N,13.8816550E, https://mapy.cz/turisticka/?q=49.7680,13.8816";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD37RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [37] U Tanku, GPS:49.7241671N,13.7352759E, https://mapy.cz/turisticka/?q=49.7241,13.7352";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD39RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [39] Zam. tri trubky, GPS:49.7044445N,13.7916666E, https://mapy.cz/turisticka/?q=49.7044,13.7916";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD41RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [41] U vagonu, GPS:49.7083334N,13.8236117E, https://mapy.cz/turisticka/?q=49.7083,13.8236";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD43RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [43] Pramenska Klasterka, GPS:49.7216666N,13.8380581E, https://mapy.cz/turisticka/?q=49.7216,13.8380";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD42RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [42] Pod Ustrednou, GPS:49.7008327N,13.8558358E, https://mapy.cz/turisticka/?q=49.7008,13.8558";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD48RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [48] Jedlina, GPS:49.7336128N,13.8636088E, https://mapy.cz/turisticka/?q=49.7336,13.8636";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD31RE"){        
+    if (call_old != call){       
+    alarm();        
+    sms_data = "Aktivace bodu [31] Marie Terezie, GPS:49.6541652N,13.7391651E, https://mapy.cz/turisticka/?q=49.6541,13.7391";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD28RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [28] U Studanky, GPS:49.6523175N,13.7761527E, https://mapy.cz/turisticka/?q=49.6523,13.7761";
+            postdata();
+            }
+        call_old = call;
+      }
+
+if (call == "BRD25RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [25] Vaclavka, GPS:49.6339625N,13.7788993E, https://mapy.cz/turisticka/?q=49.6339,13.7788";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD23RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [23] Na Rovinach, GPS:49.6672216N,13.8105547E, https://mapy.cz/turisticka/?q=49.6672,13.8105";
+            postdata();
+            }
+            call_old = call;
+      }
+if (call == "BRD20RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [20] Bor, GPS:49.6883337N,13.8524991E, https://mapy.cz/turisticka/?q=49.6883,13.8524";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD15RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [15] Tok louka, GPS:49.7025016N,13.8727766E, https://mapy.cz/turisticka/?q=49.7025,13.8727";
+            postdata();
+            }
+            call_old = call;
+      }
+
+if (call == "BRD10RE"){        
+    if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [10] Alianka, GPS:49.7280545N,13.8927752E, https://mapy.cz/turisticka/?q=49.7280,13.8927";
+            postdata();
+            }
+            call_old = call;
+          }
+
+if (call == "BRD7RE"){        
+if (call_old != call){        
+    alarm();        
+    sms_data = "Aktivace bodu [7] Valdecky rybnik, GPS:49.7666652N,13.8994431E, https://mapy.cz/turisticka/?q=49.7666,13.8994";
+            postdata();
+            }
+            call_old = call;
+          }
+
+if (call == "BRD4RE"){        
+  if (call_old != call){        
+  alarm();        
+  sms_data = "Aktivace bodu [4] Krejcovina, GPS:49.7805540N,13.9144421E, https://mapy.cz/turisticka/?q=49.78055,13.9144";
+        postdata();
+        }
+        call_old = call;
+      }
+
+
+if (pocet == 90){
+        stav();
+        client.println("OK5TVR-16>APZM4A,TCPIP*:;BRDRES   *291833z4943.91N/01345.68E+ Rescue BRDY TEST by OK5TVR");
+        pocet = 0;
+        call_old ="";
+      }
+      data="";
+      }
+  }
+
+  // if the server's disconnected, stop the client:
+  if (!client.connected()) {
+    Serial.println();
+    Serial.println("disconnecting.");
+    stav();
+    con_aprs();
+
+    // do nothing forevermore:
+    for(;;)
+      ;
+  }
+
+}
+
+void con_aprs() {
+Serial.println("\nStarting connection...");
+    // if you get a connection, report back via serial:
+    if (client.connect(servername, 14587)) {
+      Serial.println("connected");
+      WebSerial.println("connected");
+      // Make a HTTP request:
+      client.println("");
+      client.println("user " + user + " pass " + password_aprs);
+      client.println("");
+      client.println("OK5TVR-16>APZM4A,TCPIP*:;BRDRES   *291833z4943.91N/01345.68E+ Ressusce BRDY TESt");
+      }
+}
+
+void alarm(){
+      Serial.println("--------ALAMR-------");
+      WebSerial.print("ALAMR");
+      display.clearDisplay();
+      display.setTextSize(2);             // Normal 1:1 pixel scale
+      display.setTextColor(WHITE);        // Draw white text
+      display.setCursor(0,0);             // Start at top-left corner
+      display.println(F("ALAMR"));
+      display.setCursor(0,30);       
+      display.setTextSize(1);        // Start at top-left corner
+      display.println(call);
+      display.setCursor(0,55);       
+      display.setTextSize(1);        // Start at top-left corner
+      display.println(stav_radek);
+      display.display();
+      }
+
+void postdata(){
+  
+  sms_data.trim();
+
+  for (int i = 0; i < 4; i++) {
+        Serial.println("----SMS---");
+        Serial.println(tel_seznam[i]);
+        telefon = tel_seznam[i].c_str();
+        telefon.trim();
+
+        
+        display.clearDisplay();
+        display.setTextSize(2);             // Normal 1:1 pixel scale
+        display.setTextColor(WHITE);        // Draw white text
+        display.setCursor(0,0);             // Start at top-left corner
+        display.println(F("SMS"));
+        display.setCursor(0,30);       
+        display.setTextSize(1);        // Start at top-left corner
+        display.println(telefon);
+        display.setCursor(0,55);       
+        display.setTextSize(1);        // Start at top-left corner
+        display.println(stav_radek);
+        display.display();
+
+        myPort.println("AT+CMGF=1"); // Configuring TEXT mode
+        delay(1000);
+        updateSerial();
+        myPort.println("AT+CMGS=\"" + telefon + "\"");//change ZZ with country code and xxxxxxxxxxx with phone number to sms
+        updateSerial();
+        myPort.print(sms_data); //text content
+        updateSerial();
+        myPort.write(0x1A);
+        sms_data = "";
+        delay(10000);
+        updateSerial();
+
+            }
+}
+
+void updateSerial()
+{
+  delay(50);
+  
+  while (myPort.available())
+  {
+    Serial.write(myPort.read());//Forward what Software Serial received to Serial Port
+    
+  }
+}
+
+void test_sim800_module()
+{
+  myPort.println("AT");
+  updateSerial();
+  Serial.println();
+  myPort.println("AT+CSQ");
+  updateSerial();
+  myPort.println("AT+CCID");
+  updateSerial();
+  myPort.println("AT+CREG?");
+  updateSerial();
+  myPort.println("ATI");
+  updateSerial();
+  myPort.println("AT+CBC");
+  updateSerial();
+}
+
+void stav(){
+Serial.println(F("-------------------"));
+String wifi_stav = "";
+String aprs_stav = "";
+String signal_stav = "";
+int signal_i = 0;
+signal_stav = "";
+
+if (WiFi.status() == WL_CONNECTED){
+  wifi_stav = "|W|";
+}
+else {
+  wifi_stav = "|w|";
+}
+
+if (client.connected()){
+  aprs_stav = "|A|";
+}
+else {
+  aprs_stav = "|a|";
+}
+
+myPort.println("AT+CSQ");
+delay(500);
+while (myPort.available())
+  {
+    char rs232 = myPort.read();//Forward what Software Serial received to Serial Port
+    signal_stav= signal_stav + rs232;
+  }
+
+    Serial.print("signal: ");
+    Serial.println(signal_stav);
+    WebSerial.print("signal: ");
+    WebSerial.println(signal_stav);
+
+signal_stav = signal_stav.substring(signal_stav.indexOf(":") + 1,signal_stav.indexOf(","));
+signal_i = signal_stav.toInt();
+
+
+switch (signal_i)
+{
+case 0 ... 9:
+  signal_stav = "|S   |" ;
+  break;
+case 10 ... 14:
+  signal_stav = "|S*  |" ;
+  break;
+case 15 ... 20:
+  signal_stav = "|S** |" ;
+  break;
+case 21 ... 30:
+  signal_stav = "|S***|" ;
+  break;
+default:
+  signal_stav = "|s   |" ;
+  break;
+}
+
+stav_radek = wifi_stav + "  " + aprs_stav + "  " + signal_stav;
+Serial.println(stav_radek);
+Serial.println(F("-------------------"));
+}
+
+void wifi(){
+    WiFi.setHostname("BRDY_SMS");
+    WiFi.begin(ssid, password);
+
+  while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
+  }
+
+IP = WiFi.localIP().toString();
+Serial.println (WiFi.localIP());
+}
